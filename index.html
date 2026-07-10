@@ -113,7 +113,6 @@
           نظام آلي لتنظيم الخروج لدورة المياه
         </p>
 
-        <!-- تحذير الأوفلاين -->
         <div
           id="offline-warning"
           class="hidden mt-4 inline-flex items-center gap-2 bg-amber-500/20 text-amber-300 px-4 py-2 rounded-xl text-sm font-bold border border-amber-500/30"
@@ -138,7 +137,7 @@
       </div>
     </div>
 
-    <!-- Firebase Integration -->
+    <!-- Firebase Realtime Database Integration -->
     <script type="module">
       import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
       import {
@@ -146,25 +145,25 @@
         signInAnonymously,
         onAuthStateChanged,
       } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+      // استخدام Realtime Database بدلاً من Firestore
       import {
-        getFirestore,
-        doc,
-        setDoc,
-        onSnapshot,
-      } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        getDatabase,
+        ref,
+        set,
+        onValue,
+      } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-database.js";
 
-      // ==========================================
-      // 🔴🔴🔴 ضع إعدادات Firebase الخاصة بك هنا 🔴🔴🔴
-      // ==========================================
+      // بياناتك كما هي
       const MY_CUSTOM_FIREBASE_CONFIG = {
-        // apiKey: "ضع_المفتاح_هنا",
-        // authDomain: "ضع_الدومين_هنا",
-        // projectId: "ضع_معرف_المشروع_هنا",
-        // storageBucket: "...",
-        // messagingSenderId: "...",
-        // appId: "..."
+        apiKey: "AIzaSyBx8BHOmWro4zSASKTMGpUfRaNkEHcVw20",
+        authDomain: "press-9e413.firebaseapp.com",
+        databaseURL: "https://press-9e413-default-rtdb.firebaseio.com", // سطر جديد لـ Realtime DB
+        projectId: "press-9e413",
+        storageBucket: "press-9e413.firebasestorage.app",
+        messagingSenderId: "829446280747",
+        appId: "1:829446280747:web:9a4bd382baaa2e5346fc6e",
+        measurementId: "G-LTLDZPEHVM",
       };
-      // ==========================================
 
       const APP_STATE = {
         AVAILABLE: "AVAILABLE",
@@ -178,23 +177,18 @@
       let occupantStartTimeMs = null;
       let isOfflineMode = false;
 
-      let app, auth, db, currentUser;
+      let app, auth, db, currentUser, dbRef;
 
-      // دالة لاختيار قاعدة البيانات (سواء المدمجة أو الخاصة بك أو وضع الأوفلاين)
       function initApp() {
-        let configToUse = null;
-
-        if (typeof __firebase_config !== "undefined" && __firebase_config) {
-          configToUse = JSON.parse(__firebase_config);
-        } else if (MY_CUSTOM_FIREBASE_CONFIG.apiKey) {
-          configToUse = MY_CUSTOM_FIREBASE_CONFIG;
-        }
+        let configToUse = MY_CUSTOM_FIREBASE_CONFIG;
 
         if (configToUse) {
           try {
             app = initializeApp(configToUse);
             auth = getAuth(app);
-            db = getFirestore(app);
+            db = getDatabase(app);
+            // تحديد مسار البيانات في القاعدة
+            dbRef = ref(db, "bathroomState");
 
             onAuthStateChanged(auth, (user) => {
               currentUser = user;
@@ -202,6 +196,7 @@
             });
             signInAnonymously(auth);
           } catch (e) {
+            console.error(e);
             startOfflineMode();
           }
         } else {
@@ -209,9 +204,6 @@
         }
       }
 
-      // ==========================================
-      // وضع الأوفلاين (يمنع تعليق الشاشة على Netlify)
-      // ==========================================
       function startOfflineMode() {
         isOfflineMode = true;
         document.getElementById("offline-warning").classList.remove("hidden");
@@ -227,21 +219,15 @@
         };
 
         updateLocalState(savedState);
-
-        // الاستماع للتغييرات في المتصفح نفسه (탭 أخرى)
-        window.addEventListener("storage", (e) => {
-          if (e.key === "bathroomSyncData") {
-            updateLocalState(JSON.parse(e.newValue));
-          }
-        });
       }
 
       function updateLocalState(data) {
+        if (!data) return;
         currentState = data.state;
-        activeRequest.studentName = data.studentName;
-        activeRequest.className = data.className;
-        requestTimeMs = data.requestTime;
-        occupantStartTimeMs = data.occupantStartTime;
+        activeRequest.studentName = data.studentName || "";
+        activeRequest.className = data.className || "";
+        requestTimeMs = data.requestTime || null;
+        occupantStartTimeMs = data.occupantStartTime || null;
         renderUI();
       }
 
@@ -250,23 +236,19 @@
           localStorage.setItem("bathroomSyncData", JSON.stringify(data));
           updateLocalState(data);
         } else {
-          const docId =
-            typeof __app_id !== "undefined" ? __app_id : "default-bathroom-app";
-          const docRef = doc(db, "public_rooms", docId);
-          setDoc(docRef, data);
+          // الحفظ في Realtime Database
+          set(dbRef, data);
         }
       }
 
       function listenToDatabase() {
-        const docId =
-          typeof __app_id !== "undefined" ? __app_id : "default-bathroom-app";
-        const docRef = doc(db, "public_rooms", docId);
-
-        onSnapshot(
-          docRef,
-          (docSnap) => {
-            if (docSnap.exists()) {
-              updateLocalState(docSnap.data());
+        // الاستماع للتحديثات المباشرة من Realtime Database
+        onValue(
+          dbRef,
+          (snapshot) => {
+            const data = snapshot.val();
+            if (data) {
+              updateLocalState(data);
             } else {
               saveToDatabase({
                 state: APP_STATE.AVAILABLE,
@@ -277,16 +259,13 @@
               });
             }
           },
-          (err) => {
-            console.error("DB Error:", err);
+          (error) => {
+            console.error("Firebase Error:", error);
             startOfflineMode();
           },
         );
       }
 
-      // ==========================================
-      // أحداث الأزرار (Buttons Events)
-      // ==========================================
       window.handleRequest = function (e) {
         e.preventDefault();
         const nameInput = document.getElementById("student-name").value.trim();
@@ -315,9 +294,6 @@
         });
       };
 
-      // ==========================================
-      // واجهات المستخدم (UI Rendering)
-      // ==========================================
       function renderUI() {
         const container = document.getElementById("main-container");
         if (currentState === APP_STATE.AVAILABLE)
@@ -417,9 +393,6 @@
             `;
       }
 
-      // ==========================================
-      // محرك الوقت (Timer Engine)
-      // ==========================================
       setInterval(() => {
         if (currentState === APP_STATE.WAITING && requestTimeMs) {
           const elapsed = Date.now() - requestTimeMs;
