@@ -157,7 +157,8 @@
       const MY_CUSTOM_FIREBASE_CONFIG = {
         apiKey: "AIzaSyBx8BHOmWro4zSASKTMGpUfRaNkEHcVw20",
         authDomain: "press-9e413.firebaseapp.com",
-        databaseURL: "https://press-9e413-default-rtdb.firebaseio.com", // سطر جديد لـ Realtime DB
+        databaseURL:
+          "https://press-9e413-default-rtdb.asia-southeast1.firebasedatabase.app", // سطر جديد لـ Realtime DB
         projectId: "press-9e413",
         storageBucket: "press-9e413.firebasestorage.app",
         messagingSenderId: "829446280747",
@@ -194,7 +195,10 @@
               currentUser = user;
               if (user) listenToDatabase();
             });
-            signInAnonymously(auth);
+            signInAnonymously(auth).catch((e) => {
+              console.error("Anonymous Auth:", e);
+              startOfflineMode();
+            });
           } catch (e) {
             console.error(e);
             startOfflineMode();
