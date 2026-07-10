@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>نظام الاستئذان الذكي</title>
+    <title>نظام الاستئذان الذكي الموحد</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link
       href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap"
@@ -110,12 +110,28 @@
           نظام آلي لتنظيم الخروج لدورة المياه
         </p>
 
-        <div
-          id="offline-warning"
-          class="hidden mt-4 inline-flex items-center gap-2 bg-amber-500/20 text-amber-300 px-4 py-2 rounded-xl text-sm font-bold border border-amber-500/30"
-        >
-          <i data-lucide="wifi-off" class="w-4 h-4"></i>
-          يعمل بدون شبكة (لا توجد مزامنة بين الأجهزة)
+        <div class="mt-3 flex justify-center gap-2 flex-wrap">
+          <div
+            id="stage-badge"
+            class="hidden inline-flex items-center gap-2 bg-indigo-500/20 text-indigo-300 px-4 py-1.5 rounded-xl text-sm font-bold border border-indigo-500/30 shadow-sm"
+          >
+            <i data-lucide="school" class="w-4 h-4"></i>
+            <span id="stage-text"></span>
+            <button
+              onclick="resetStage()"
+              class="mr-2 text-xs text-white bg-white/10 hover:bg-white/20 px-2 py-0.5 rounded-lg transition-all"
+            >
+              تغيير المرحلة
+            </button>
+          </div>
+
+          <div
+            id="offline-warning"
+            class="hidden inline-flex items-center gap-2 bg-amber-500/20 text-amber-300 px-4 py-2 rounded-xl text-sm font-bold border border-amber-500/30"
+          >
+            <i data-lucide="wifi-off" class="w-4 h-4"></i>
+            يعمل بدون شبكة (لا توجد مزامنة بين الأجهزة)
+          </div>
         </div>
       </header>
 
@@ -166,13 +182,14 @@
         OCCUPIED: "OCCUPIED",
       };
 
-      // 7- إنشاء معرف ثابت لكل جهاز
+      // معرف فريد ثابت لكل جهاز لمنع تداخل أزرار العودة
       let deviceId = localStorage.getItem("deviceId");
       if (!deviceId) {
         deviceId = crypto.randomUUID();
         localStorage.setItem("deviceId", deviceId);
       }
 
+      let chosenStage = null; // يحمل القيمة 'intermediate' للمتوسط أو 'elementary' للابتدائي
       let currentState = null;
       let activeRequest = {
         className: "",
@@ -183,6 +200,7 @@
       let isOfflineMode = false;
 
       let app, auth, db, currentUser, dbRef;
+      let unsubscribeDB = null; // لإلغاء الاستماع السابق عند تغيير المرحلة الدراسية
 
       function initApp() {
         let configToUse = MY_CUSTOM_FIREBASE_CONFIG;
@@ -192,12 +210,13 @@
             app = initializeApp(configToUse);
             auth = getAuth(app);
             db = getDatabase(app);
-            dbRef = ref(db, "bathroomState");
 
             onAuthStateChanged(auth, (user) => {
               currentUser = user;
-              if (user) listenToDatabase();
+              // إذا تمت عملية التسجيل واختار المشرف المرحلة مسبقاً، يبدأ الاتصال فوراً
+              if (user && chosenStage) listenToDatabase();
             });
+
             signInAnonymously(auth).catch((e) => {
               console.error("Anonymous Auth:", e);
               startOfflineMode();
@@ -209,15 +228,62 @@
         } else {
           startOfflineMode();
         }
+
+        // عرض واجهة اختيار المرحلة الدراسية للمشرف أولاً
+        renderUI();
       }
+
+      // دالة تفعيل المرحلة الدراسية وفصل قواعد البيانات تلقائياً
+      window.selectStage = function (stage) {
+        chosenStage = stage;
+
+        const badge = document.getElementById("stage-badge");
+        const text = document.getElementById("stage-text");
+        if (badge && text) {
+          text.innerText =
+            stage === "intermediate"
+              ? "المرحلة المتوسطة"
+              : "المرحلة الابتدائية";
+          badge.classList.remove("hidden");
+        }
+
+        if (isOfflineMode) {
+          startOfflineMode();
+        } else {
+          // الفصل التام في مسارات البيانات بناءً على المرحلة المختارة
+          dbRef = ref(db, "bathroomState/" + chosenStage);
+          if (currentUser) {
+            listenToDatabase();
+          } else {
+            renderUI();
+          }
+        }
+      };
+
+      // دالة العودة لشاشة اختيار المراحل الدراسية
+      window.resetStage = function () {
+        if (unsubscribeDB) {
+          unsubscribeDB();
+          unsubscribeDB = null;
+        }
+        chosenStage = null;
+        currentState = null;
+        document.getElementById("stage-badge").classList.add("hidden");
+        renderUI();
+      };
 
       function startOfflineMode() {
         isOfflineMode = true;
         document.getElementById("offline-warning").classList.remove("hidden");
 
-        const savedState = JSON.parse(
-          localStorage.getItem("bathroomSyncData"),
-        ) || {
+        if (!chosenStage) {
+          renderUI();
+          return;
+        }
+
+        // حفظ منفصل محلياً أيضاً في حال انقطاع الشبكة تماماً
+        const localKey = "bathroomSyncData_" + chosenStage;
+        const savedState = JSON.parse(localStorage.getItem(localKey)) || {
           state: APP_STATE.AVAILABLE,
           className: "",
           ownerDevice: "",
@@ -240,15 +306,18 @@
 
       function saveToDatabase(data) {
         if (isOfflineMode) {
-          localStorage.setItem("bathroomSyncData", JSON.stringify(data));
+          const localKey = "bathroomSyncData_" + chosenStage;
+          localStorage.setItem(localKey, JSON.stringify(data));
           updateLocalState(data);
         } else {
-          set(dbRef, data);
+          if (dbRef) set(dbRef, data);
         }
       }
 
       function listenToDatabase() {
-        onValue(
+        if (unsubscribeDB) unsubscribeDB();
+
+        unsubscribeDB = onValue(
           dbRef,
           (snapshot) => {
             const data = snapshot.val();
@@ -274,7 +343,6 @@
       window.handleRequest = function (e) {
         e.preventDefault();
 
-        // 2- تعديل handleRequest للاعتماد على المجموعة فقط
         const classInput = document.querySelector(
           'input[name="class-select"]:checked',
         );
@@ -283,7 +351,7 @@
           saveToDatabase({
             state: APP_STATE.WAITING,
             className: classInput.value,
-            ownerDevice: deviceId, // حفظ معرف الجهاز بدلاً من اسم المشرف
+            ownerDevice: deviceId,
             requestTime: Date.now(),
             occupantStartTime: null,
           });
@@ -291,7 +359,6 @@
       };
 
       window.handleReturn = function () {
-        // التحقق من أن الجهاز الذي يحاول إنهاء العملية هو نفس الجهاز الذي بدأها
         if (deviceId !== activeRequest.ownerDevice) {
           alert("لا يمكنك إنهاء هذا الاستئذان لأنه يتبع جهازاً آخر.");
           return;
@@ -308,13 +375,46 @@
 
       function renderUI() {
         const container = document.getElementById("main-container");
-        if (currentState === APP_STATE.AVAILABLE)
+        if (!container) return;
+
+        // 1- إذا لم يتم اختيار أي مرحلة حتى الآن، نعرض شاشة تحديد الهوية المبدئية
+        if (!chosenStage) {
+          container.innerHTML = getStageSelectionUI();
+        } else if (currentState === null) {
+          container.innerHTML = `
+                <div class="flex flex-col items-center justify-center py-20 text-white">
+                    <i data-lucide="loader-2" class="w-12 h-12 animate-spin text-indigo-400 mb-4"></i>
+                    <p class="text-slate-400 font-bold">جاري جلب حالة دورة المياه المخصصة...</p>
+                </div>
+            `;
+        } else if (currentState === APP_STATE.AVAILABLE) {
           container.innerHTML = getAvailableUI();
-        else if (currentState === APP_STATE.WAITING)
+        } else if (currentState === APP_STATE.WAITING) {
           container.innerHTML = getWaitingUI();
-        else if (currentState === APP_STATE.OCCUPIED)
+        } else if (currentState === APP_STATE.OCCUPIED) {
           container.innerHTML = getOccupiedUI();
+        }
+
         if (typeof lucide !== "undefined") lucide.createIcons();
+      }
+
+      // واجهة شاشة اختيار المرحلة الأساسية فور فتح التطبيق
+      function getStageSelectionUI() {
+        return `
+            <div class="text-center py-10 fade-scale-up">
+                <h2 class="text-2xl font-bold text-white mb-8">مرحباً بك في بوابة الاستئذان الذكية، يرجى تحديد هويتك:</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-lg mx-auto">
+                    <button onclick="selectStage('intermediate')" class="p-8 rounded-2xl border-2 border-slate-700/50 bg-slate-900/40 hover:bg-indigo-600/20 hover:border-indigo-500/50 text-white font-black text-xl transition-all flex flex-col items-center gap-3 group shadow-lg">
+                        <span class="text-4xl group-hover:scale-110 transition-transform">🏫</span>
+                        مشرف المرحلة المتوسطة
+                    </button>
+                    <button onclick="selectStage('elementary')" class="p-8 rounded-2xl border-2 border-slate-700/50 bg-slate-900/40 hover:bg-purple-600/20 hover:border-purple-500/50 text-white font-black text-xl transition-all flex flex-col items-center gap-3 group shadow-lg">
+                        <span class="text-4xl group-hover:scale-110 transition-transform">🎒</span>
+                        مشرف المرحلة الابتدائية
+                    </button>
+                </div>
+            </div>
+        `;
       }
 
       function getAvailableUI() {
@@ -328,7 +428,7 @@
             </div>
             <form onsubmit="handleRequest(event)" class="space-y-8 relative z-10">
                 <div class="space-y-3">
-                    <label class="block text-slate-300 font-bold text-lg">المجموعة</label>
+                    <label class="block text-slate-300 font-bold text-lg">المجموعة الحالية المصرح لها الخروج</label>
                     <div class="grid grid-cols-3 gap-3 md:gap-4">
                         <label class="cursor-pointer relative">
                             <input type="radio" name="class-select" value="الأول (أ)" required class="peer sr-only class-radio">
@@ -345,7 +445,7 @@
                     </div>
                 </div>
                 <button type="submit" class="w-full bg-white text-slate-900 hover:bg-indigo-50 font-black text-xl py-4 rounded-2xl transition-all shadow-[0_0_20px_rgba(255,255,255,0.2)] flex items-center justify-center gap-3">
-                    تأكيد حجز الدورة <i data-lucide="arrow-left-circle" class="w-6 h-6"></i>
+                    تأكيد حجز الدورة وإغلاقها <i data-lucide="arrow-left-circle" class="w-6 h-6"></i>
                 </button>
             </form>
         `;
@@ -365,7 +465,7 @@
                     <span id="countdown-text" class="text-6xl font-black text-white absolute">10</span>
                 </div>
                 <div class="bg-white/5 border border-white/10 rounded-xl p-4 w-full max-w-sm">
-                    <p class="text-sm text-slate-400 mb-1">المجموعة الحالية:</p>
+                    <p class="text-sm text-slate-400 mb-1">المجموعة الحالية الجاري فحصها:</p>
                     <p class="font-bold text-lg text-amber-300">${activeRequest.className}</p>
                 </div>
             </div>
@@ -409,8 +509,8 @@
                 </button>
                 `
                     : `
-                <div class="w-full bg-amber-500/20 border border-amber-500/30 text-amber-300 font-bold text-lg py-4 rounded-2xl">
-                    لا يمكن إنهاء هذا الاستئذان إلا من الجهاز الذي بدأه
+                <div class="w-full bg-amber-500/20 border border-amber-500/30 text-amber-300 font-bold text-lg py-4 rounded-2xl px-2">
+                    المجموعة مستخدمة حالياً - لا يمكن الإنهاء إلا من جهاز المشرف الحاجز
                 </div>
                 `
                 }
