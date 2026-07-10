@@ -4,14 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>نظام الاستئذان الذكي</title>
-    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Google Fonts: Cairo -->
     <link
       href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap"
       rel="stylesheet"
     />
-    <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
 
     <style>
@@ -137,7 +134,6 @@
       </div>
     </div>
 
-    <!-- Firebase Realtime Database Integration -->
     <script type="module">
       import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
       import {
@@ -145,7 +141,6 @@
         signInAnonymously,
         onAuthStateChanged,
       } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-      // استخدام Realtime Database بدلاً من Firestore
       import {
         getDatabase,
         ref,
@@ -153,12 +148,11 @@
         onValue,
       } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-database.js";
 
-      // بياناتك كما هي
       const MY_CUSTOM_FIREBASE_CONFIG = {
         apiKey: "AIzaSyBx8BHOmWro4zSASKTMGpUfRaNkEHcVw20",
         authDomain: "press-9e413.firebaseapp.com",
         databaseURL:
-          "https://press-9e413-default-rtdb.asia-southeast1.firebasedatabase.app", // سطر جديد لـ Realtime DB
+          "https://press-9e413-default-rtdb.asia-southeast1.firebasedatabase.app",
         projectId: "press-9e413",
         storageBucket: "press-9e413.firebasestorage.app",
         messagingSenderId: "829446280747",
@@ -172,8 +166,18 @@
         OCCUPIED: "OCCUPIED",
       };
 
+      // 7- إنشاء معرف ثابت لكل جهاز
+      let deviceId = localStorage.getItem("deviceId");
+      if (!deviceId) {
+        deviceId = crypto.randomUUID();
+        localStorage.setItem("deviceId", deviceId);
+      }
+
       let currentState = null;
-      let activeRequest = { studentName: "", className: "" };
+      let activeRequest = {
+        className: "",
+        ownerDevice: "",
+      };
       let requestTimeMs = null;
       let occupantStartTimeMs = null;
       let isOfflineMode = false;
@@ -188,7 +192,6 @@
             app = initializeApp(configToUse);
             auth = getAuth(app);
             db = getDatabase(app);
-            // تحديد مسار البيانات في القاعدة
             dbRef = ref(db, "bathroomState");
 
             onAuthStateChanged(auth, (user) => {
@@ -216,8 +219,8 @@
           localStorage.getItem("bathroomSyncData"),
         ) || {
           state: APP_STATE.AVAILABLE,
-          studentName: "",
           className: "",
+          ownerDevice: "",
           requestTime: null,
           occupantStartTime: null,
         };
@@ -228,8 +231,8 @@
       function updateLocalState(data) {
         if (!data) return;
         currentState = data.state;
-        activeRequest.studentName = data.studentName || "";
         activeRequest.className = data.className || "";
+        activeRequest.ownerDevice = data.ownerDevice || "";
         requestTimeMs = data.requestTime || null;
         occupantStartTimeMs = data.occupantStartTime || null;
         renderUI();
@@ -240,13 +243,11 @@
           localStorage.setItem("bathroomSyncData", JSON.stringify(data));
           updateLocalState(data);
         } else {
-          // الحفظ في Realtime Database
           set(dbRef, data);
         }
       }
 
       function listenToDatabase() {
-        // الاستماع للتحديثات المباشرة من Realtime Database
         onValue(
           dbRef,
           (snapshot) => {
@@ -256,8 +257,8 @@
             } else {
               saveToDatabase({
                 state: APP_STATE.AVAILABLE,
-                studentName: "",
                 className: "",
+                ownerDevice: "",
                 requestTime: null,
                 occupantStartTime: null,
               });
@@ -272,16 +273,17 @@
 
       window.handleRequest = function (e) {
         e.preventDefault();
-        const nameInput = document.getElementById("student-name").value.trim();
+
+        // 2- تعديل handleRequest للاعتماد على المجموعة فقط
         const classInput = document.querySelector(
           'input[name="class-select"]:checked',
         );
 
-        if (nameInput && classInput) {
+        if (classInput) {
           saveToDatabase({
             state: APP_STATE.WAITING,
-            studentName: nameInput,
             className: classInput.value,
+            ownerDevice: deviceId, // حفظ معرف الجهاز بدلاً من اسم المشرف
             requestTime: Date.now(),
             occupantStartTime: null,
           });
@@ -289,10 +291,16 @@
       };
 
       window.handleReturn = function () {
+        // التحقق من أن الجهاز الذي يحاول إنهاء العملية هو نفس الجهاز الذي بدأها
+        if (deviceId !== activeRequest.ownerDevice) {
+          alert("لا يمكنك إنهاء هذا الاستئذان لأنه يتبع جهازاً آخر.");
+          return;
+        }
+
         saveToDatabase({
           state: APP_STATE.AVAILABLE,
-          studentName: "",
           className: "",
+          ownerDevice: "",
           requestTime: null,
           occupantStartTime: null,
         });
@@ -311,90 +319,103 @@
 
       function getAvailableUI() {
         return `
-                <div class="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-3xl"></div>
-                <div class="text-center mb-8">
-                    <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-bold text-sm mb-4">
-                        <div class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
-                        دورة المياه متاحة الآن
+            <div class="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-3xl"></div>
+            <div class="text-center mb-8">
+                <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-bold text-sm mb-4">
+                    <div class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
+                    دورة المياه متاحة الآن
+                </div>
+            </div>
+            <form onsubmit="handleRequest(event)" class="space-y-8 relative z-10">
+                <div class="space-y-3">
+                    <label class="block text-slate-300 font-bold text-lg">المجموعة</label>
+                    <div class="grid grid-cols-3 gap-3 md:gap-4">
+                        <label class="cursor-pointer relative">
+                            <input type="radio" name="class-select" value="الأول (أ)" required class="peer sr-only class-radio">
+                            <div class="text-center p-3 md:p-4 rounded-2xl border-2 border-slate-700/50 text-slate-400 font-bold transition-all hover:bg-white/5"><span class="block text-xl mb-1">1️⃣</span> الأول (أ)</div>
+                        </label>
+                        <label class="cursor-pointer relative">
+                            <input type="radio" name="class-select" value="الأول (ب)" class="peer sr-only class-radio">
+                            <div class="text-center p-3 md:p-4 rounded-2xl border-2 border-slate-700/50 text-slate-400 font-bold transition-all hover:bg-white/5"><span class="block text-xl mb-1">2️⃣</span> الأول (ب)</div>
+                        </label>
+                        <label class="cursor-pointer relative">
+                            <input type="radio" name="class-select" value="الأول (ج)" class="peer sr-only class-radio">
+                            <div class="text-center p-3 md:p-4 rounded-2xl border-2 border-slate-700/50 text-slate-400 font-bold transition-all hover:bg-white/5"><span class="block text-xl mb-1">3️⃣</span> الأول (ج)</div>
+                        </label>
                     </div>
                 </div>
-                <form onsubmit="handleRequest(event)" class="space-y-8 relative z-10">
-                    <div class="space-y-3">
-                        <label class="block text-slate-300 font-bold text-lg">اسم الطالب المستأذن</label>
-                        <div class="relative">
-                            <div class="absolute inset-y-0 right-0 flex items-center pr-4 pointer-events-none">
-                                <i data-lucide="user" class="w-6 h-6 text-slate-400"></i>
-                            </div>
-                            <input type="text" id="student-name" required placeholder="اكتب الاسم هنا..." 
-                                class="w-full bg-slate-900/50 border-2 border-slate-700/50 text-white rounded-2xl focus:ring-4 focus:ring-indigo-500/30 focus:border-indigo-500 block pr-12 p-4 text-lg outline-none transition-all placeholder:text-slate-600">
-                        </div>
-                    </div>
-                    <div class="space-y-3">
-                        <label class="block text-slate-300 font-bold text-lg">الفصل</label>
-                        <div class="grid grid-cols-3 gap-3 md:gap-4">
-                            <label class="cursor-pointer relative">
-                                <input type="radio" name="class-select" value="الفصل الأول" required class="peer sr-only class-radio">
-                                <div class="text-center p-3 md:p-4 rounded-2xl border-2 border-slate-700/50 text-slate-400 font-bold transition-all hover:bg-white/5"><span class="block text-xl mb-1">1️⃣</span> الأول</div>
-                            </label>
-                            <label class="cursor-pointer relative">
-                                <input type="radio" name="class-select" value="الفصل الثاني" class="peer sr-only class-radio">
-                                <div class="text-center p-3 md:p-4 rounded-2xl border-2 border-slate-700/50 text-slate-400 font-bold transition-all hover:bg-white/5"><span class="block text-xl mb-1">2️⃣</span> الثاني</div>
-                            </label>
-                            <label class="cursor-pointer relative">
-                                <input type="radio" name="class-select" value="الفصل الثالث" class="peer sr-only class-radio">
-                                <div class="text-center p-3 md:p-4 rounded-2xl border-2 border-slate-700/50 text-slate-400 font-bold transition-all hover:bg-white/5"><span class="block text-xl mb-1">3️⃣</span> الثالث</div>
-                            </label>
-                        </div>
-                    </div>
-                    <button type="submit" class="w-full bg-white text-slate-900 hover:bg-indigo-50 font-black text-xl py-4 rounded-2xl transition-all shadow-[0_0_20px_rgba(255,255,255,0.2)] flex items-center justify-center gap-3">
-                        طلب إذن خروج <i data-lucide="arrow-left-circle" class="w-6 h-6"></i>
-                    </button>
-                </form>
-            `;
+                <button type="submit" class="w-full bg-white text-slate-900 hover:bg-indigo-50 font-black text-xl py-4 rounded-2xl transition-all shadow-[0_0_20px_rgba(255,255,255,0.2)] flex items-center justify-center gap-3">
+                    تأكيد حجز الدورة <i data-lucide="arrow-left-circle" class="w-6 h-6"></i>
+                </button>
+            </form>
+        `;
       }
 
       function getWaitingUI() {
         return `
-                <div class="absolute top-0 left-0 w-full h-full bg-amber-500/5 blur-3xl rounded-full"></div>
-                <div class="flex flex-col items-center justify-center py-10 relative z-10 text-center fade-scale-up">
-                    <h2 class="text-2xl font-bold text-white mb-2">جاري التحقق من دورة المياه...</h2>
-                    <p class="text-slate-400 mb-10">الرجاء الانتظار قليلاً حتى يتم التأكد من عدم وجود أشخاص بالداخل.</p>
-                    <div class="relative w-48 h-48 flex items-center justify-center mb-8">
-                        <svg class="absolute inset-0 w-full h-full" viewBox="0 0 100 100">
-                            <circle cx="50" cy="50" r="45" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="6"></circle>
-                            <circle id="countdown-ring" cx="50" cy="50" r="45" fill="none" stroke="#f59e0b" stroke-width="6" stroke-linecap="round" class="countdown-circle" stroke-dasharray="283" stroke-dashoffset="0"></circle>
-                        </svg>
-                        <span id="countdown-text" class="text-6xl font-black text-white absolute">10</span>
-                    </div>
-                    <div class="bg-white/5 border border-white/10 rounded-xl p-4 w-full max-w-sm">
-                        <p class="text-sm text-slate-400 mb-1">الطلب الحالي لـ:</p>
-                        <p class="font-bold text-lg text-amber-300">${activeRequest.studentName} - <span class="text-white">${activeRequest.className}</span></p>
-                    </div>
+            <div class="absolute top-0 left-0 w-full h-full bg-amber-500/5 blur-3xl rounded-full"></div>
+            <div class="flex flex-col items-center justify-center py-10 relative z-10 text-center fade-scale-up">
+                <h2 class="text-2xl font-bold text-white mb-2">جاري التحقق من دورة المياه...</h2>
+                <p class="text-slate-400 mb-10">الرجاء الانتظار قليلاً حتى يتم التأكد من عدم وجود أشخاص بالداخل.</p>
+                <div class="relative w-48 h-48 flex items-center justify-center mb-8">
+                    <svg class="absolute inset-0 w-full h-full" viewBox="0 0 100 100">
+                        <circle cx="50" cy="50" r="45" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="6"></circle>
+                        <circle id="countdown-ring" cx="50" cy="50" r="45" fill="none" stroke="#f59e0b" stroke-width="6" stroke-linecap="round" class="countdown-circle" stroke-dasharray="283" stroke-dashoffset="0"></circle>
+                    </svg>
+                    <span id="countdown-text" class="text-6xl font-black text-white absolute">10</span>
                 </div>
-            `;
+                <div class="bg-white/5 border border-white/10 rounded-xl p-4 w-full max-w-sm">
+                    <p class="text-sm text-slate-400 mb-1">المجموعة الحالية:</p>
+                    <p class="font-bold text-lg text-amber-300">${activeRequest.className}</p>
+                </div>
+            </div>
+        `;
       }
 
       function getOccupiedUI() {
+        const canReturn = deviceId === activeRequest.ownerDevice;
+
         return `
-                <div class="absolute top-0 left-0 w-full h-full bg-rose-500/10 blur-3xl rounded-full"></div>
-                <div class="text-center py-6 relative z-10 fade-scale-up">
-                    <div class="inline-flex items-center gap-2 px-5 py-2 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-400 font-bold mb-8">
-                        <i data-lucide="lock" class="w-5 h-5"></i> دورة المياه مشغولة حالياً
-                    </div>
-                    <div class="bg-slate-900/50 border border-white/10 rounded-3xl p-8 mb-8 relative overflow-hidden">
-                        <div class="absolute top-0 right-0 w-2 h-full bg-gradient-to-b from-rose-400 to-orange-500"></div>
-                        <h3 class="text-3xl font-black text-white mb-2">${activeRequest.studentName}</h3>
-                        <p class="text-slate-400 text-lg mb-6">${activeRequest.className}</p>
-                        <div class="border-t border-white/10 pt-6 mt-2">
-                            <p class="text-sm text-slate-500 mb-2">الوقت المنقضي بالداخل</p>
-                            <p id="elapsed-time-text" class="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-orange-300 to-rose-300 tabular-nums tracking-wider">00:00</p>
-                        </div>
-                    </div>
-                    <button onclick="handleReturn()" class="w-full bg-gradient-to-r from-rose-500 to-orange-500 hover:from-rose-600 hover:to-orange-600 text-white font-black text-xl py-4 rounded-2xl transition-all shadow-[0_4px_20px_rgba(225,29,72,0.4)] flex items-center justify-center gap-3">
-                        تسجيل عودة الطالب <i data-lucide="log-in" class="w-6 h-6"></i>
-                    </button>
+            <div class="absolute top-0 left-0 w-full h-full bg-rose-500/10 blur-3xl rounded-full"></div>
+            <div class="text-center py-6 relative z-10 fade-scale-up">
+                <div class="inline-flex items-center gap-2 px-5 py-2 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-400 font-bold mb-8">
+                    <i data-lucide="lock" class="w-5 h-5"></i>
+                    دورة المياه مشغولة حالياً
                 </div>
-            `;
+
+                <div class="bg-slate-900/50 border border-white/10 rounded-3xl p-8 mb-8 relative overflow-hidden">
+                    <div class="absolute top-0 right-0 w-2 h-full bg-gradient-to-b from-rose-400 to-orange-500"></div>
+
+                    <h3 class="text-3xl font-black text-white mb-6">
+                        ${activeRequest.className}
+                    </h3>
+
+                    <div class="border-t border-white/10 pt-6 mt-2">
+                        <p class="text-sm text-slate-500 mb-2">
+                            الوقت المنقضي بالداخل
+                        </p>
+                        <p id="elapsed-time-text" class="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-orange-300 to-rose-300 tabular-nums tracking-wider">
+                            00:00
+                        </p>
+                    </div>
+                </div>
+
+                ${
+                  canReturn
+                    ? `
+                <button onclick="handleReturn()" class="w-full bg-gradient-to-r from-rose-500 to-orange-500 hover:from-rose-600 hover:to-orange-600 text-white font-black text-xl py-4 rounded-2xl transition-all shadow-[0_4px_20px_rgba(225,29,72,0.4)] flex items-center justify-center gap-3">
+                    عودة المجموعة
+                    <i data-lucide="log-in" class="w-6 h-6"></i>
+                </button>
+                `
+                    : `
+                <div class="w-full bg-amber-500/20 border border-amber-500/30 text-amber-300 font-bold text-lg py-4 rounded-2xl">
+                    لا يمكن إنهاء هذا الاستئذان إلا من الجهاز الذي بدأه
+                </div>
+                `
+                }
+            </div>
+        `;
       }
 
       setInterval(() => {
@@ -413,8 +434,8 @@
           if (remaining === 0) {
             saveToDatabase({
               state: APP_STATE.OCCUPIED,
-              studentName: activeRequest.studentName,
               className: activeRequest.className,
+              ownerDevice: activeRequest.ownerDevice,
               requestTime: requestTimeMs,
               occupantStartTime: Date.now(),
             });
